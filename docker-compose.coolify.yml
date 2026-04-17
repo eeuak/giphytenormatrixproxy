@@ -1,0 +1,28 @@
+services:
+  app:
+    build:
+      context: ./giphytenormatrixproxy
+      dockerfile: Dockerfile
+    environment:
+      CONFIG_TEMPLATE: |
+        server_name: ${SERVER_NAME:?}
+        well_known_response:
+        allow_proxy: ${ALLOW_PROXY:-false}
+        server_key: ${SERVER_KEY:?}
+        hostname: 0.0.0.0
+        port: 8008
+        destination: https://i.giphy.com/%s.webp
+        tenor_destination: https://media.tenor.com/%s/image.webp
+        giphy_api_key: ${GIPHY_API_KEY:?}
+        tenor_api_key: ${TENOR_API_KEY:?}
+        locale: ${LOCALE:-en_US}
+        gif_path: /gif/
+        index_path: /
+        storage_path: /storage
+    entrypoint: ["/bin/sh", "/usr/local/bin/start.sh"]
+    volumes:
+      - type: bind
+        source: ./storage
+        target: /storage
+        is_directory: true
+    restart: unless-stopped

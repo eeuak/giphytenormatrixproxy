@@ -20,10 +20,9 @@ RUN apk add --no-cache ca-certificates libwebp
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/bin/giphyproxy /usr/bin/giphyproxy
+COPY start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
 
 VOLUME /data
 WORKDIR /data
 CMD ["/usr/bin/giphyproxy"]
-
-COPY start.sh /data/start.sh
-RUN chmod +x /data/start.sh
