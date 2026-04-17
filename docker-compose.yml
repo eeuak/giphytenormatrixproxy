@@ -3,15 +3,15 @@ services:
         image: ${PROXY_IMAGE:-giphytenormatrixproxy}
         container_name: ${CONTAINER_NAME:-giphytenormatrixproxy}
         build:
-            context: ${BUILD_CONTEXT:-./matrix/build/giphytenormatrixproxy}
+            context: ${BUILD_CONTEXT:-./giphytenormatrixproxy}
             dockerfile: Dockerfile
         environment:
             TZ: ${TIMEZONE:-UTC}
         networks:
             - ${NETWORK_NAME:-matrix}
         volumes:
-            - ${CONFIG_PATH:-./matrix/giphytenormatrixproxy/config.yaml}:/data/config.yaml
-            - ${STORAGE_PATH:-./matrix/giphytenormatrixproxy/storage}:/storage
+            - ${CONFIG_PATH:-./config.yaml}:/data/config.yaml
+            - ${STORAGE_PATH:-./storage}:/storage
         restart: on-failure
         labels:
             traefik.enable: true
