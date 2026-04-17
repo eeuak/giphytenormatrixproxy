@@ -1,8 +1,8 @@
 module go.mau.fi/stickerpicker/giphyproxy
 
-go 1.22.0
+go 1.25.0
 
-toolchain go1.23.3
+toolchain go1.25.9
 
 require (
 	go.mau.fi/util v0.8.2

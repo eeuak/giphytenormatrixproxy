@@ -1,4 +1,4 @@
-FROM golang:1-alpine AS builder
+FROM golang:1.25.9-alpine3.23 AS builder
 
 RUN apk add --no-cache ca-certificates
 WORKDIR /build/giphyproxy
@@ -14,7 +14,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -o /usr/bin/giphyproxy
 
-FROM alpine:latest
+FROM alpine:3.23.4
 
 RUN apk add --no-cache ca-certificates libwebp
 
@@ -24,3 +24,6 @@ COPY --from=builder /usr/bin/giphyproxy /usr/bin/giphyproxy
 VOLUME /data
 WORKDIR /data
 CMD ["/usr/bin/giphyproxy"]
+
+COPY start.sh /data/start.sh
+RUN chmod +x /data/start.sh

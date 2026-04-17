@@ -18,10 +18,10 @@ package main
 
 import (
 	"context"
-	"crypto/rand" // Add this import
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -29,9 +29,11 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -63,7 +65,6 @@ type Config struct {
 	TenorAPIKey             string `yaml:"tenor_api_key"`
 	IndexPath               string `yaml:"index_path"`
 	StoragePath             string `yaml:"storage_path"`
-	LocalAPIBearer          string `yaml:"local_api_bearer"`
 	GifPath                 string `yaml:"gif_path"`
 	Locale                  string `yaml:"locale"`
 }
@@ -86,6 +87,7 @@ var (
 	localImagesCacheTS  time.Time
 	localImagesCacheTTL = 5 * time.Minute // Configure cache TTL
 	localImagesCacheMu  sync.RWMutex
+	upstreamHTTPClient  = &http.Client{Timeout: 15 * time.Second}
 )
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -219,13 +221,39 @@ func invalidateLocalImagesCache() {
 	localImagesCacheMu.Unlock()
 }
 
-func generateRandomBearer() string {
-	b := make([]byte, 32)
-	_, err := rand.Read(b)
+func secureJoinInBase(baseDir, requestedName string) (string, error) {
+	baseAbs, err := filepath.Abs(baseDir)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
-	return base64.URLEncoding.EncodeToString(b)
+
+	targetAbs, err := filepath.Abs(filepath.Join(baseAbs, requestedName))
+	if err != nil {
+		return "", err
+	}
+
+	relPath, err := filepath.Rel(baseAbs, targetAbs)
+	if err != nil {
+		return "", err
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+		return "", errors.New("path escapes storage root")
+	}
+
+	return targetAbs, nil
+}
+
+func proxyJSON(w http.ResponseWriter, endpoint url.URL) {
+	resp, err := upstreamHTTPClient.Get(endpoint.String())
+	if err != nil {
+		http.Error(w, "Upstream request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func main() {
@@ -244,11 +272,6 @@ func main() {
 		}
 		cfg.Locale = strings.ReplaceAll(cfg.Locale, "-", "_")
 
-		if cfg.LocalAPIBearer == "" {
-			cfg.LocalAPIBearer = generateRandomBearer()
-			log.Printf("Generated Local API Bearer: %s", cfg.LocalAPIBearer)
-		}
-
 		if cfg.GifPath == "" {
 			cfg.GifPath = "/gif/"
 		}
@@ -264,25 +287,19 @@ func main() {
 			}
 
 			data := struct {
-				ServerName     string
-				GiphyAPIKey    string
-				TenorAPIKey    string
-				HasLocalFiles  bool
-				HasGiphyKey    bool
-				HasTenorKey    bool
-				LocalAPIBearer string
-				GifPath        string
-				Locale         string
+				ServerName    string
+				HasLocalFiles bool
+				HasGiphyKey   bool
+				HasTenorKey   bool
+				GifPath       string
+				Locale        string
 			}{
-				ServerName:     cfg.ServerName,
-				GiphyAPIKey:    cfg.GiphyAPIKey,
-				TenorAPIKey:    cfg.TenorAPIKey,
-				HasLocalFiles:  false,
-				HasGiphyKey:    cfg.GiphyAPIKey != "",
-				HasTenorKey:    cfg.TenorAPIKey != "",
-				LocalAPIBearer: cfg.LocalAPIBearer,
-				GifPath:        cfg.GifPath,
-				Locale:         cfg.Locale,
+				ServerName:    cfg.ServerName,
+				HasLocalFiles: false,
+				HasGiphyKey:   cfg.GiphyAPIKey != "",
+				HasTenorKey:   cfg.TenorAPIKey != "",
+				GifPath:       cfg.GifPath,
+				Locale:        cfg.Locale,
 			}
 
 			// Check if local storage has any files
@@ -309,6 +326,109 @@ func main() {
 
 		router.PathPrefix("/styles.css").Handler(http.FileServer(http.FS(content)))
 
+		router.HandleFunc("/api/giphy/search", func(w http.ResponseWriter, r *http.Request) {
+			if cfg.GiphyAPIKey == "" {
+				http.Error(w, "Giphy is not configured", http.StatusServiceUnavailable)
+				return
+			}
+
+			endpoint := url.URL{
+				Scheme: "https",
+				Host:   "api.giphy.com",
+				Path:   fmt.Sprintf("/v1/%s/search", map[bool]string{true: "stickers", false: "gifs"}[r.URL.Query().Get("stickers") == "true"]),
+			}
+			query := url.Values{}
+			query.Set("api_key", cfg.GiphyAPIKey)
+			query.Set("limit", "50")
+			query.Set("offset", r.URL.Query().Get("offset"))
+			query.Set("q", r.URL.Query().Get("q"))
+			if query.Get("offset") == "" {
+				query.Set("offset", "0")
+			}
+			if country := r.URL.Query().Get("country"); country != "" {
+				query.Set("country_code", country)
+			}
+			endpoint.RawQuery = query.Encode()
+			proxyJSON(w, endpoint)
+		}).Methods(http.MethodGet)
+
+		router.HandleFunc("/api/giphy/trending", func(w http.ResponseWriter, r *http.Request) {
+			if cfg.GiphyAPIKey == "" {
+				http.Error(w, "Giphy is not configured", http.StatusServiceUnavailable)
+				return
+			}
+
+			endpoint := url.URL{
+				Scheme: "https",
+				Host:   "api.giphy.com",
+				Path:   fmt.Sprintf("/v1/%s/trending", map[bool]string{true: "stickers", false: "gifs"}[r.URL.Query().Get("stickers") == "true"]),
+			}
+			query := url.Values{}
+			query.Set("api_key", cfg.GiphyAPIKey)
+			query.Set("limit", "50")
+			query.Set("offset", r.URL.Query().Get("offset"))
+			if query.Get("offset") == "" {
+				query.Set("offset", "0")
+			}
+			if country := r.URL.Query().Get("country"); country != "" {
+				query.Set("country_code", country)
+			}
+			endpoint.RawQuery = query.Encode()
+			proxyJSON(w, endpoint)
+		}).Methods(http.MethodGet)
+
+		router.HandleFunc("/api/tenor/search", func(w http.ResponseWriter, r *http.Request) {
+			if cfg.TenorAPIKey == "" {
+				http.Error(w, "Tenor is not configured", http.StatusServiceUnavailable)
+				return
+			}
+
+			endpoint := url.URL{
+				Scheme: "https",
+				Host:   "tenor.googleapis.com",
+				Path:   "/v2/search",
+			}
+			query := url.Values{}
+			query.Set("key", cfg.TenorAPIKey)
+			query.Set("limit", "50")
+			query.Set("q", r.URL.Query().Get("q"))
+			if pos := r.URL.Query().Get("pos"); pos != "" {
+				query.Set("pos", pos)
+			}
+			if locale := r.URL.Query().Get("locale"); locale != "" {
+				query.Set("locale", locale)
+			}
+			if country := r.URL.Query().Get("country"); country != "" {
+				query.Set("country", country)
+			}
+			endpoint.RawQuery = query.Encode()
+			proxyJSON(w, endpoint)
+		}).Methods(http.MethodGet)
+
+		router.HandleFunc("/api/tenor/featured", func(w http.ResponseWriter, r *http.Request) {
+			if cfg.TenorAPIKey == "" {
+				http.Error(w, "Tenor is not configured", http.StatusServiceUnavailable)
+				return
+			}
+
+			endpoint := url.URL{
+				Scheme: "https",
+				Host:   "tenor.googleapis.com",
+				Path:   "/v2/featured",
+			}
+			query := url.Values{}
+			query.Set("key", cfg.TenorAPIKey)
+			query.Set("limit", "50")
+			if locale := r.URL.Query().Get("locale"); locale != "" {
+				query.Set("locale", locale)
+			}
+			if country := r.URL.Query().Get("country"); country != "" {
+				query.Set("country", country)
+			}
+			endpoint.RawQuery = query.Encode()
+			proxyJSON(w, endpoint)
+		}).Methods(http.MethodGet)
+
 		// Debug endpoint to show redirect URL
 		router.HandleFunc(path.Join(cfg.GifPath, "{id}"), func(w http.ResponseWriter, r *http.Request) {
 			vars := mux.Vars(r)
@@ -332,10 +452,8 @@ func main() {
 					http.Error(w, "Invalid filename encoding", http.StatusBadRequest)
 					return
 				}
-				path := filepath.Join(cfg.StoragePath, string(filename))
-				// Normalize path
-				path = filepath.Clean(path)
-				if !strings.HasPrefix(path, cfg.StoragePath) {
+				path, err := secureJoinInBase(cfg.StoragePath, string(filename))
+				if err != nil {
 					http.Error(w, "Invalid path", http.StatusBadRequest)
 					return
 				}
@@ -349,14 +467,6 @@ func main() {
 
 		// Serve local storage listing
 		router.HandleFunc("/api/local", func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			expectedHeader := "Bearer " + cfg.LocalAPIBearer
-
-			if authHeader != expectedHeader {
-				http.NotFound(w, r)
-				return
-			}
-
 			images, err := listLocalImages(cfg.StoragePath)
 			if err != nil {
 				http.Error(w, "Error reading storage directory", http.StatusInternalServerError)
@@ -391,8 +501,12 @@ func main() {
 
 		// Start the server
 		server := &http.Server{
-			Addr:    fmt.Sprintf("%s:%d", cfg.ServerConfig.Hostname, cfg.ServerConfig.Port),
-			Handler: handlers.CombinedLoggingHandler(os.Stderr, router),
+			Addr:              fmt.Sprintf("%s:%d", cfg.ServerConfig.Hostname, cfg.ServerConfig.Port),
+			Handler:           handlers.CombinedLoggingHandler(os.Stderr, router),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		}
 
 		log.Printf("Server starting on %s:%d", cfg.ServerConfig.Hostname, cfg.ServerConfig.Port)
