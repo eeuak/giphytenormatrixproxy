@@ -21,14 +21,12 @@ port: 8008
 
 # Redirect destination. This can be changed to serve a different format.
 destination: https://i.giphy.com/%s.webp
-tenor_destination: https://media.tenor.com/%s/image.webp
 
-# API keys for Giphy and Tenor
+# API key for Giphy
 giphy_api_key: YOUR_GIPHY_API_KEY
-tenor_api_key: YOUR_TENOR_API_KEY
 
 # Locale configuration (default: en_US)
-# Used for Tenor and Giphy API requests
+# Used for Giphy API requests
 locale: en_US
 
 # Optional path for serving GIFs (default: /gif/)

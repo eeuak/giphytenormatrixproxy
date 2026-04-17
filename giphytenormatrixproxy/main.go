@@ -60,9 +60,7 @@ type Config struct {
 	mediaproxy.BasicConfig  `yaml:",inline"`
 	mediaproxy.ServerConfig `yaml:",inline"`
 	Destination             string `yaml:"destination"`
-	TenorDestination        string `yaml:"tenor_destination"`
 	GiphyAPIKey             string `yaml:"giphy_api_key"`
-	TenorAPIKey             string `yaml:"tenor_api_key"`
 	IndexPath               string `yaml:"index_path"`
 	StoragePath             string `yaml:"storage_path"`
 	GifPath                 string `yaml:"gif_path"`
@@ -75,10 +73,8 @@ var config *Config = nil
 
 var (
 	giphyIDRegex     = regexp.MustCompile(`^g-[a-zA-Z0-9-_]+$`)
-	tenorIDRegex     = regexp.MustCompile(`^t-[a-zA-Z0-9-_]+$`)
 	localIDRegex     = regexp.MustCompile(`^l-[a-zA-Z0-9+/=_-]+$`) // Modified for base64
 	giphyDestination = "https://i.giphy.com/%s.webp"
-	tenorDestination = "https://media.tenor.com/%s/image.webp"
 )
 
 // Add these near the top with other vars
@@ -290,14 +286,12 @@ func main() {
 				ServerName    string
 				HasLocalFiles bool
 				HasGiphyKey   bool
-				HasTenorKey   bool
 				GifPath       string
 				Locale        string
 			}{
 				ServerName:    cfg.ServerName,
 				HasLocalFiles: false,
 				HasGiphyKey:   cfg.GiphyAPIKey != "",
-				HasTenorKey:   cfg.TenorAPIKey != "",
 				GifPath:       cfg.GifPath,
 				Locale:        cfg.Locale,
 			}
@@ -377,58 +371,6 @@ func main() {
 			proxyJSON(w, endpoint)
 		}).Methods(http.MethodGet)
 
-		router.HandleFunc("/api/tenor/search", func(w http.ResponseWriter, r *http.Request) {
-			if cfg.TenorAPIKey == "" {
-				http.Error(w, "Tenor is not configured", http.StatusServiceUnavailable)
-				return
-			}
-
-			endpoint := url.URL{
-				Scheme: "https",
-				Host:   "tenor.googleapis.com",
-				Path:   "/v2/search",
-			}
-			query := url.Values{}
-			query.Set("key", cfg.TenorAPIKey)
-			query.Set("limit", "50")
-			query.Set("q", r.URL.Query().Get("q"))
-			if pos := r.URL.Query().Get("pos"); pos != "" {
-				query.Set("pos", pos)
-			}
-			if locale := r.URL.Query().Get("locale"); locale != "" {
-				query.Set("locale", locale)
-			}
-			if country := r.URL.Query().Get("country"); country != "" {
-				query.Set("country", country)
-			}
-			endpoint.RawQuery = query.Encode()
-			proxyJSON(w, endpoint)
-		}).Methods(http.MethodGet)
-
-		router.HandleFunc("/api/tenor/featured", func(w http.ResponseWriter, r *http.Request) {
-			if cfg.TenorAPIKey == "" {
-				http.Error(w, "Tenor is not configured", http.StatusServiceUnavailable)
-				return
-			}
-
-			endpoint := url.URL{
-				Scheme: "https",
-				Host:   "tenor.googleapis.com",
-				Path:   "/v2/featured",
-			}
-			query := url.Values{}
-			query.Set("key", cfg.TenorAPIKey)
-			query.Set("limit", "50")
-			if locale := r.URL.Query().Get("locale"); locale != "" {
-				query.Set("locale", locale)
-			}
-			if country := r.URL.Query().Get("country"); country != "" {
-				query.Set("country", country)
-			}
-			endpoint.RawQuery = query.Encode()
-			proxyJSON(w, endpoint)
-		}).Methods(http.MethodGet)
-
 		// Debug endpoint to show redirect URL
 		router.HandleFunc(path.Join(cfg.GifPath, "{id}"), func(w http.ResponseWriter, r *http.Request) {
 			vars := mux.Vars(r)
@@ -438,10 +380,6 @@ func main() {
 			switch {
 			case giphyIDRegex.MatchString(id):
 				url = fmt.Sprintf(giphyDestination, strings.TrimPrefix(id, "g-"))
-				http.Redirect(w, r, url, http.StatusFound)
-				return
-			case tenorIDRegex.MatchString(id):
-				url = fmt.Sprintf(tenorDestination, strings.TrimPrefix(id, "t-"))
 				http.Redirect(w, r, url, http.StatusFound)
 				return
 			case localIDRegex.MatchString(id): // Add this case
@@ -487,13 +425,10 @@ func main() {
 			}
 			log.Fatalf("Error creating media proxy: %s", err)
 		}
-		mp.KeyServer.Version.Name = "giphytenormatrixproxy - tenor giphy proxy"
+		mp.KeyServer.Version.Name = "giphytenormatrixproxy - giphy proxy"
 		mp.ForceProxyLegacyFederation = true
 		if cfg.Destination != "" {
 			giphyDestination = cfg.Destination
-		}
-		if cfg.TenorDestination != "" {
-			tenorDestination = cfg.TenorDestination
 		}
 
 		// Register media proxy routes
@@ -538,10 +473,6 @@ func getMedia(_ context.Context, id string, _ map[string]string) (response media
 	case giphyIDRegex.MatchString(id):
 		return &mediaproxy.GetMediaResponseURL{
 			URL: fmt.Sprintf(giphyDestination, strings.TrimPrefix(id, "g-")),
-		}, nil
-	case tenorIDRegex.MatchString(id):
-		return &mediaproxy.GetMediaResponseURL{
-			URL: fmt.Sprintf(tenorDestination, strings.TrimPrefix(id, "t-")),
 		}, nil
 	case localIDRegex.MatchString(id):
 		url := fmt.Sprintf("https://%s%s%s", config.BasicConfig.ServerName, config.GifPath, id)

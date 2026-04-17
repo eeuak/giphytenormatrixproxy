@@ -1,10 +1,10 @@
-# GiphyTenor Matrix Proxy
+# Giphy Matrix Proxy
 
-A Matrix media proxy server that enables easy integration of Giphy and Tenor GIFs into Matrix clients. Based on [maunium/stickerpicker](https://github.com/maunium/stickerpicker/), this proxy implements the Matrix media API to serve GIFs from Giphy and Tenor while maintaining compatibility with Matrix clients.
+A Matrix media proxy server that enables easy integration of Giphy GIFs into Matrix clients. Based on [maunium/stickerpicker](https://github.com/maunium/stickerpicker/), this proxy implements the Matrix media API to serve GIFs from Giphy while maintaining compatibility with Matrix clients.
 
 ## Features
 
-- Serves as a Matrix media server for Giphy and Tenor GIFs
+- Serves as a Matrix media server for Giphy GIFs
 - Implements Matrix federation API for seamless integration
 - Built-in web interface for serving a GIF search and selection widget
 - Supports MSC3860/MSC3916 media download redirects
@@ -16,7 +16,6 @@ A Matrix media proxy server that enables easy integration of Giphy and Tenor GIF
 - Traefik (for reverse proxy and SSL)
 - A domain name with DNS configured
 - Giphy API key (get one at https://developers.giphy.com/)
-- Tenor API key (get one at https://tenor.com/developer/dashboard)
 
 ## Installation
 
@@ -40,7 +39,7 @@ cp example-config.yaml config.yaml
 4. Edit `config.yaml` with your settings:
 - Set your `server_name` (e.g., `giphy.example.com`)
 - Add your generated server key
-- Insert your Giphy and Tenor API keys
+- Insert your Giphy API key
 - Configure other options as needed
 
 5. Configure environment variables:

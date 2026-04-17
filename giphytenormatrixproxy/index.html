@@ -100,7 +100,6 @@
     var SERVER_NAME = "{{.ServerName}}";
     var HAS_LOCAL_FILES = {{.HasLocalFiles }};
     var HAS_GIPHY_KEY = {{.HasGiphyKey}};
-    var HAS_TENOR_KEY = {{.HasTenorKey}};
     var GIF_PATH = "{{.GifPath}}";
     var LOCALE = "{{.Locale}}";
 
@@ -181,12 +180,13 @@
     // Add history management functions
     const historyManager = {
       getHistory() {
-        return JSON.parse(localStorage.getItem('gifHistory') || '[]');
+        return JSON.parse(localStorage.getItem('gifHistory') || '[]')
+          .filter((gif) => !(gif.source === 'tenor' || 'media_formats' in gif));
       },
 
       addToHistory(gif) {
         let history = this.getHistory();
-        const source = gif.source || (gif.media_formats ? 'tenor' : gif.images ? 'giphy' : 'local');
+        const source = gif.source || (gif.images ? 'giphy' : 'local');
         const existingIndex = history.findIndex(item =>
           item.id === gif.id && item.source === source
         );
@@ -208,7 +208,7 @@
 
       removeFromHistory(gif) {
         let history = this.getHistory();
-        const source = gif.source || (gif.media_formats ? 'tenor' : gif.images ? 'giphy' : 'local');
+        const source = gif.source || (gif.images ? 'giphy' : 'local');
         history = history.filter(item =>
           !(item.id === gif.id && item.source === source)
         );
@@ -383,117 +383,6 @@
       }
     }
 
-    class TenorSearch extends Component {
-      constructor(props) {
-        super(props);
-        this.state = {
-          error: null,
-          pos: 0,
-        };
-        this.handleGifClick = this.handleGifClick.bind(this);
-        this.handleScroll = this.handleScroll.bind(this);
-      }
-
-      async makeGifSearchRequest() {
-        try {
-          const endpoint = this.props.searchTerm ?
-            `/api/tenor/search?q=${encodeURIComponent(this.props.searchTerm)}&pos=${this.state.pos}&locale=${LOCALE}&country=${COUNTRY_CODE}` :
-            `/api/tenor/featured?locale=${LOCALE}&country=${COUNTRY_CODE}`;
-
-          const resp = await fetch(endpoint);
-          if (!resp.ok) throw new Error('Failed to load Tenor results');
-          const data = await resp.json();
-          const gifs = data.results;
-
-          if (gifs.length === 0 && this.state.pos === 0) {
-            this.setState({ error: "No results" });
-            this.props.setResults([]);
-          } else {
-            this.setState({ error: null });
-            this.props.setResults(this.state.pos === 0 ? gifs : [...this.props.results, ...gifs]);
-            this.setState({ pos: data.next });
-          }
-        } catch (error) {
-          this.setState({ error: "An error occurred while searching for GIFs." });
-        }
-      }
-
-      componentDidUpdate(prevProps) {
-        if (this.props.searchTerm !== prevProps.searchTerm) {
-          if (this.props.searchTerm) {
-            this.setState({ pos: 0 }, () => this.makeGifSearchRequest());
-          } else {
-            this.props.setResults([]);
-          }
-        }
-      }
-
-      handleGifClick(gif, event) {
-        if (event && event.button === 2) {
-          event.preventDefault();
-          showContextMenu(event, gif, true);
-          return;
-        }
-
-        if (sizeManager.getAskForSize()) {
-          showSizeMenu(event, gif);
-        } else {
-          sendGif(gif);
-        }
-      }
-
-      handleScroll() {
-        if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) {
-          this.makeGifSearchRequest();
-        }
-      }
-
-      componentDidMount() {
-        window.addEventListener('scroll', this.handleScroll);
-      }
-
-      componentWillUnmount() {
-        window.removeEventListener('scroll', this.handleScroll);
-      }
-
-      render() {
-        return h(
-          "div",
-          { class: "search-container" },
-          h("input", {
-            type: "text",
-            onInput: (e) => this.props.setSearchTerm(e.target.value),
-            onKeyUp: (e) => e.key === "Enter" && this.makeGifSearchRequest(),
-            value: this.props.searchTerm,
-            placeholder: "Search GIFs on Tenor",
-          }),
-          h(
-            "div",
-            { class: "pack-list" },
-            h("div", { class: "error" }, this.state.error),
-            h(
-              "div",
-              { class: "sticker-list" },
-              this.props.results.map((gif) =>
-                h(
-                  "div",
-                  {
-                    class: "sticker",
-                    onClick: (e) => this.handleGifClick(gif, e),
-                    onContextMenu: (e) => this.handleGifClick(gif, e)
-                  },
-                  h("img", {
-                    src: gif.media_formats.webp.url,
-                    alt: gif.title || "GIF",
-                  })
-                )
-              )
-            )
-          )
-        );
-      }
-    }
-
     // Add History component
     class HistoryView extends Component {
       constructor(props) {
@@ -517,7 +406,7 @@
       handleGifClick(gif, event) {
         if (event && event.button === 2) {
           event.preventDefault();
-          showContextMenu(event, gif, gif.source === 'tenor', true);
+          showContextMenu(event, gif, true);
           return;
         }
 
@@ -544,8 +433,7 @@
                   onContextMenu: (e) => this.handleGifClick(gif, e)
                 },
                 h("img", {
-                  src: gif.source === 'tenor' ? gif.media_formats.webp.url :
-                    gif.source === 'local' ? gif.url :
+                  src: gif.source === 'local' ? gif.url :
                       gif.images.original.webp,
                   alt: gif.title || gif.filename || "GIF",
                 }),
@@ -636,7 +524,6 @@
         };
         this.giphyRef = { current: null };
         this.giphyStickerRef = { current: null };
-        this.tenorRef = { current: null };
         this.historyRef = null;
         this.localRef = null;
         this.setHistoryRef = (component) => {
@@ -646,9 +533,7 @@
 
       componentDidMount() {
         // Run initial empty searches based on the active tab
-        if (this.state.activeTab === "tenor" && HAS_TENOR_KEY) {
-          this.tenorRef?.current?.makeGifSearchRequest();
-        } else if (this.state.activeTab === "giphy" && HAS_GIPHY_KEY) {
+        if (this.state.activeTab === "giphy" && HAS_GIPHY_KEY) {
           this.giphyRef?.current?.makeGifSearchRequest();
         } else if (this.state.activeTab === "giphy-stickers" && HAS_GIPHY_KEY) {
           this.giphyStickerRef?.current?.makeGifSearchRequest();
@@ -656,7 +541,6 @@
       }
 
       getDefaultTab() {
-        if (HAS_TENOR_KEY) return "tenor";
         if (HAS_GIPHY_KEY) return "giphy";
         if (HAS_LOCAL_FILES) return "local";
         return "history";
@@ -667,8 +551,7 @@
           if (tab === "history" || tab === "local") return;
 
           const ref = tab === "giphy" ? this.giphyRef.current :
-                     tab === "giphy-stickers" ? this.giphyStickerRef.current :
-                     this.tenorRef.current;
+                     this.giphyStickerRef.current;
 
           if (ref) ref.makeGifSearchRequest();
         });
@@ -699,14 +582,6 @@
               },
               "Stickers"
             ),
-            HAS_TENOR_KEY && h(
-              "div",
-              {
-                class: `tab ${activeTab === "tenor" ? "active" : ""}`,
-                onClick: () => this.setActiveTab("tenor"),
-              },
-              "Tenor"
-            ),
             h(
               "div",
               {
@@ -729,8 +604,7 @@
             activeTab === "local" && HAS_LOCAL_FILES ? h(LocalView, { ref: (component) => this.localRef = component }) :
               activeTab === "giphy" && HAS_GIPHY_KEY ? h(GiphySearch, { ref: this.giphyRef, searchTerm, results, setSearchTerm: (term) => this.setState({ searchTerm: term }), setResults: (results) => this.setState({ results }), isStickerSearch: false }) :
                 activeTab === "giphy-stickers" && HAS_GIPHY_KEY ? h(GiphySearch, { ref: this.giphyStickerRef, searchTerm, results, setSearchTerm: (term) => this.setState({ searchTerm: term }), setResults: (results) => this.setState({ results }), isStickerSearch: true }) :
-                  activeTab === "tenor" && HAS_TENOR_KEY ? h(TenorSearch, { ref: this.tenorRef, searchTerm, results, setSearchTerm: (term) => this.setState({ searchTerm: term }), setResults: (results) => this.setState({ results }) }) :
-                    h(HistoryView, { ref: this.setHistoryRef }) // Fallback to history if selected tab is not available
+                  h(HistoryView, { ref: this.setHistoryRef }) // Fallback to history if selected tab is not available
         );
       }
     }
@@ -794,11 +668,9 @@
     const deleteHistory = document.getElementById('deleteHistory');
 
     const giphyDestination = "https://i.giphy.com/%s.webp";
-    const tenorDestination = "https://media.tenor.com/%s/image.webp";
-
     let currentGif = null;
 
-    function showContextMenu(event, gif, isTenor = false, isHistory = false) {
+    function showContextMenu(event, gif, isHistory = false) {
       event.preventDefault();
       if (contextMenu.style.display === 'block') {
         contextMenu.style.display = 'none';
@@ -880,9 +752,6 @@
       let url;
       if (currentGif.source === 'local' || currentGif.id?.startsWith('l-')) {
         url = `mxc://${SERVER_NAME}/${currentGif.id}`;
-      } else if ('media_formats' in currentGif) {
-        const tenorId = currentGif.media_formats.webp.url.split('/').slice(-2, -1)[0];
-        url = `mxc://${SERVER_NAME}/t-${tenorId}`;
       } else {
         url = `mxc://${SERVER_NAME}/g-${currentGif.id}`;
       }
@@ -897,11 +766,6 @@
         url = `mxc://${SERVER_NAME}/${currentGif.id}`;
         width = currentGif.width;
         height = currentGif.height;
-      } else if ('media_formats' in currentGif) {
-        const tenorId = currentGif.media_formats.webp.url.split('/').slice(-2, -1)[0];
-        url = `mxc://${SERVER_NAME}/t-${tenorId}`;
-        width = currentGif.media_formats.webp.dims[0];
-        height = currentGif.media_formats.webp.dims[1];
       } else {
         url = `mxc://${SERVER_NAME}/g-${currentGif.id}`;
         width = currentGif.images.fixed_height.width;
@@ -916,9 +780,6 @@
       let url;
       if (currentGif.source === 'local' || currentGif.id?.startsWith('l-')) {
         url = `https://${SERVER_NAME}${GIF_PATH}${currentGif.id}`;  // Update this line
-      } else if ('media_formats' in currentGif) {
-        const tenorId = currentGif.media_formats.webp.url.split('/').slice(-2, -1)[0];
-        url = tenorDestination.replace('%s', tenorId);
       } else {
         url = giphyDestination.replace('%s', currentGif.id);
       }
@@ -947,22 +808,6 @@
           "msgtype": "m.image",
           "url": `mxc://${SERVER_NAME}/${gif.id}`,
           "filename": gif.filename
-        });
-      } else if ('media_formats' in gif) {
-        dimensions = customSize ?
-          sizeManager.calculateSize(gif.media_formats.webp.dims[0], gif.media_formats.webp.dims[1], customSize) :
-          { width: gif.media_formats.webp.dims[0], height: gif.media_formats.webp.dims[1] };
-        const tenorId = gif.media_formats.webp.url.split('/').slice(-2, -1)[0];
-        widgetAPI.sendSticker({
-          "body": gif.title,
-          "info": {
-            "h": dimensions.height,
-            "w": dimensions.width,
-            "mimetype": "image/webp",
-          },
-          "msgtype": "m.image",
-          "url": `mxc://${SERVER_NAME}/t-${tenorId}`,
-          "filename": `${tenorId}.webp`,
         });
       } else {
         dimensions = customSize ?
